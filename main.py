@@ -1,5 +1,3 @@
-import os
-from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, executor, types
 import asyncio
 import datetime
@@ -8,12 +6,12 @@ import keyboards as kb
 import database as db
 
 
-load_dotenv()
-bot = Bot(os.getenv('BOT_TOKEN'))
+bot = Bot('BOT_TOKEN')
 dp = Dispatcher(bot)
 
 
 async def on_startup(_):
+    await db.delete_tables()
     await db.create_tables()
 
 
@@ -26,10 +24,11 @@ async def cmd_start(message: types.Message):
 async def set_reminder(message, reminder_id):
     reminder = await db.get_reminder_by_id(reminder_id)
     while True:
-        user = await db.get_user_by_id(reminder['user_id'])
-        if user['is_on'] == 0:
-            return
         await asyncio.sleep(reminder['sleep_time'])
+        reminder = await db.get_reminder_by_id(reminder_id)
+        if reminder['is_deleted'] == 1:
+            await db.delete_reminder(reminder_id)
+            return
         await message.answer(f'Напоминалка!\n{reminder["text"]}')
         if reminder['once'] == 1:
             return
@@ -167,9 +166,9 @@ async def cmd_text(message: types.Message):
             await message.answer('Некорректное количество дней, попробуй снова', reply_markup=kb.menu)
         else:
             if int(message.text) % 10 == 1 and int(message.text) % 100 != 11:
-                reminder_date = 'каждый '
+                reminder_date = 'Каждый '
             else:
-                reminder_date = 'каждые '
+                reminder_date = 'Каждые '
             reminder_date += message.text
             if int(message.text) % 10 == 1 and int(message.text) % 100 != 11:
                 reminder_date +=' день'
@@ -202,9 +201,9 @@ async def cmd_text(message: types.Message):
                 'Некорректное количество часов, попробуй снова', reply_markup=kb.menu)
         else:
             if int(message.text) % 10 == 1 and int(message.text) % 100 != 11:
-                reminder_date = 'каждый '
+                reminder_date = 'Каждый '
             else:
-                reminder_date = 'каждые '
+                reminder_date = 'Каждые '
             reminder_date += message.text
             if int(message.text) % 10 == 1 and int(message.text) % 100 != 11:
                 reminder_date +=' час'
@@ -237,9 +236,9 @@ async def cmd_text(message: types.Message):
                 'Некорректное количество минут, попробуй снова', reply_markup=kb.menu)
         else:
             if int(message.text) % 10 == 1 and int(message.text) % 100 != 11:
-                reminder_date = 'каждую '
+                reminder_date = 'Каждую '
             else:
-                reminder_date = 'каждые '
+                reminder_date = 'Каждые '
             reminder_date += message.text
             if int(message.text) % 10 == 1 and int(message.text) % 100 != 11:
                 reminder_date += ' минуту'
@@ -266,7 +265,6 @@ async def cmd_text(message: types.Message):
         if len(reminders) != 0:
             text = 'Твои напоминалки:\n\n'
             for i in range(len(reminders)):
-                print(reminders[i])
                 text += f'{i + 1}. {reminders[i]["text"]}\n{reminders[i]["date"]}\n\n'
             text += 'Выбери действие, чтобы продолжить'
             await db.update_user_step(message.chat.id, 'my_reminders')
@@ -281,9 +279,9 @@ async def cmd_text(message: types.Message):
 
     elif user is not None and user['step'] == 'delete_reminder':
         reminders = await db.get_all_users_reminders(message.chat.id)
-        if message.text.isdigit() and int(message.text) >= 1 and int(message.text) <= len(reminders):
+        if message.text.isdigit() and 1 <= int(message.text) <= len(reminders):
             await db.update_user_step(message.chat.id, 'sure_to_delete_reminder')
-            await db.update_user_reminder_id(message.chat.id, int(message.text) - 1)
+            await db.update_user_reminder_id(message.chat.id, int(message.text))
             await message.answer(f'Вы уверены, что хотите удалить напоминалку\n\n{reminders[int(message.text) - 1]["text"]}\n{reminders[int(message.text) - 1]["date"]}',
                                  reply_markup=kb.delete_reminder)
         elif message.text == 'Удалить все напоминалки':
@@ -294,16 +292,24 @@ async def cmd_text(message: types.Message):
 
     elif user is not None and user['step'] == 'sure_to_delete_reminder':
         if message.text == 'Да':
-            await db.delete_reminder(user['reminder_id'])
+            await db.update_reminder_is_deleted(user['reminder_id'])
+            await db.update_user_step(message.chat.id, 'None')
+            await db.update_user_reminder_id(message.chat.id, -1)
             await message.answer('Напоминалка успешно удалена', reply_markup=kb.my_reminders)
         elif message.text == 'Нет':
+            await db.update_user_step(message.chat.id, 'None')
+            await db.update_user_reminder_id(message.chat.id, -1)
             await message.answer('Выбери действие, чтобы продолжить', reply_markup=kb.menu)
 
     elif user is not None and user['step'] == 'sure_to_delete_all_reminders':
         if message.text == 'Да':
-            await db.delete_all_reminders(message.chat.id)
+            await db.update_all_reminders_is_deleted(message.chat.id)
+            await db.update_user_step(message.chat.id, 'None')
+            await db.update_user_reminder_id(message.chat.id, -1)
             await message.answer('Напоминалки успешно удалены', reply_markup=kb.my_reminders)
         elif message.text == 'Нет':
+            await db.update_user_step(message.chat.id, 'None')
+            await db.update_user_reminder_id(message.chat.id, -1)
             await message.answer('Выбери действие, чтобы продолжить', reply_markup=kb.menu)
 
     elif message.text == 'Сменить часовой пояс':
@@ -319,6 +325,8 @@ async def cmd_text(message: types.Message):
                 message.text[3:].isdigit() and 24 > int(message.text[:2]) >= 0 and 60 > int(message.text[3:]) >= 0:
             timezone = int(message.text[:2]) - int(datetime.datetime.now(datetime.timezone.utc).hour)
             await db.update_user_timezone(message.chat.id, timezone, 0)
+            await db.update_user_step(message.chat.id, 'None')
+            await db.update_user_reminder_id(message.chat.id, -1)
             await message.answer('Часовой пояс успешно сменен', reply_markup=kb.main_menu)
         else:
             await message.answer('Некорректное время, попробуй снова', reply_markup=kb.menu)
