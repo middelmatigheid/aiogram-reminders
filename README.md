@@ -87,7 +87,7 @@ python main.py
 # Project structure
 
 ```bash
-aiogram-randombot/
+aiogram-reminders/
 ├── main.py               # Main file to run the bot
 ├── app/
 │   ├── handlers.py       # File for handling bot's requests
